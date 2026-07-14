@@ -44,13 +44,14 @@ async function run() {
     const usersCollection = database.collection("users");
     const productsCollection = database.collection("products");
     const ordersCollection = database.collection("orders");
+    const homepageContentCollection = database.collection("homepageContent");
 
     app.post("/bkash-checkout", async (req, res) => {
       try {
         const { amount, callbackURL, orderID, reference } = req.body;
         const paymentDetails = {
           amount: amount || 10, // your product price
-          callbackURL: callbackURL || "http://localhost:5000/bkash-callback", // your callback route
+          callbackURL: callbackURL || "https://node.modhuka.com/bkash-callback", // your callback route
           orderID: orderID || "Order_101", // your orderID
           reference: reference || "1", // your reference
         };
@@ -200,8 +201,30 @@ async function run() {
       res.send(result);
     });
 
+    // Get homepage content (single document)
+    app.get("/homepage-content", async (req, res) => {
+      const result = await homepageContentCollection.findOne({});
+      res.send(result || {});
+    });
+
+    // Create/update homepage content (upsert single document)
+    app.put("/homepage-content", async (req, res) => {
+      const content = req.body;
+      delete content._id;
+      const existing = await homepageContentCollection.findOne({});
+      const updateDoc = { $set: { ...content, updatedAt: new Date() } };
+      const result = await homepageContentCollection.updateOne(
+        existing ? { _id: existing._id } : {},
+        updateDoc,
+        { upsert: true },
+      );
+      res.send(result);
+    });
+
     app.post("/orders", async (req, res) => {
       const order = req.body;
+      if (!order.status) order.status = "pending";
+      order.createdAt = new Date();
       const result = await ordersCollection.insertOne(order);
       res.send(result);
     });
@@ -210,6 +233,29 @@ async function run() {
     app.get("/orders", async (req, res) => {
       const result = await ordersCollection.find().toArray();
       res.send(result);
+    });
+
+    // Update order status
+    app.patch("/orders/:id/status", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { status } = req.body; // expected values: pending, processing, delivered, canceled
+        if (!status)
+          return res.status(400).send({ message: "Status is required" });
+
+        const query = { _id: new ObjectId(id) };
+        const updateDoc = { $set: { status } };
+
+        const result = await ordersCollection.updateOne(query, updateDoc);
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: "Order not found" });
+        }
+
+        res.send({ message: "Order status updated", status });
+      } catch (error) {
+        console.error(" Update Order Status Error:", error);
+        res.status(500).send({ message: "Internal server error" });
+      }
     });
 
     // Delete product
@@ -222,7 +268,7 @@ async function run() {
 
     await client.db("admin").command({ ping: 1 });
     console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!"
+      "Pinged your deployment. You successfully connected to MongoDB!",
     );
   } finally {
     // Ensures that the client will close when you finish/error
